@@ -290,6 +290,7 @@
         <button id="btn-size-plus">+</button>
       </div>
       <button id="btn-undo" class="tool-btn">↩️ 撤销</button>
+      <button id="btn-help-bottom" class="tool-btn">📖 说明</button>
     </div>
   </div>
 
@@ -311,27 +312,23 @@
       <div class="gesture-list">
         <div class="gesture-item">
           <span class="g-icon">🖊️</span>
-          <div class="g-info"><div class="g-name">食指伸出</div><div class="g-desc">在空间中绘画，手远近控制笔触深度</div></div>
+          <div class="g-info"><div class="g-name">食指伸出（单指）</div><div class="g-desc">在空间中绘画，手远近控制笔触深度</div></div>
         </div>
         <div class="gesture-item">
           <span class="g-icon">✌️</span>
-          <div class="g-info"><div class="g-name">食指 + 中指</div><div class="g-desc">循环切换颜色</div></div>
+          <div class="g-info"><div class="g-name">食指 + 中指（双指）</div><div class="g-desc">循环切换颜色</div></div>
         </div>
         <div class="gesture-item">
           <span class="g-icon">✊</span>
-          <div class="g-info"><div class="g-name">握拳</div><div class="g-desc">橡皮擦模式</div></div>
+          <div class="g-info"><div class="g-name">握拳（保持0.8秒）</div><div class="g-desc">暂停 / 继续绘画</div></div>
         </div>
         <div class="gesture-item">
           <span class="g-icon">🤏</span>
           <div class="g-info"><div class="g-name">拇指食指捏合（保持1.5秒）</div><div class="g-desc">清空画布</div></div>
         </div>
-        <div class="gesture-item">
-          <span class="g-icon">👍</span>
-          <div class="g-info"><div class="g-name">拇指竖起（保持0.8秒）</div><div class="g-desc">暂停 / 继续绘画</div></div>
-        </div>
       </div>
       <div class="tip-box">
-        💡 <b>提示：</b>点击 🔍 或双指拖动可旋转视角查看笔画的深度层次；底部工具栏提供按钮操作作为手势的补充。
+        💡 <b>提示：</b>点击底部 🧹 切换橡皮擦模式；点击 🔍 或双指拖动旋转视角查看深度；所有手势操作也可通过底部按钮完成。
       </div>
       <button class="btn-got-it" id="btn-help-dismiss">我知道了，开始绘画！</button>
     </div>
@@ -691,6 +688,8 @@ function hideHelp(){
 // 帮助按钮
 document.getElementById('btn-help').addEventListener('click', showHelp);
 document.getElementById('btn-help').addEventListener('touchend', e=>{ e.preventDefault(); showHelp(); });
+document.getElementById('btn-help-bottom').addEventListener('click', showHelp);
+document.getElementById('btn-help-bottom').addEventListener('touchend', e=>{ e.preventDefault(); showHelp(); });
 helpDismiss.addEventListener('click', hideHelp);
 helpDismiss.addEventListener('touchend', e=>{ e.preventDefault(); hideHelp(); });
 function clearAll(){
@@ -784,10 +783,9 @@ function classifyGesture(lm){
 
   const pinch=Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y);
   if(pinch<0.05 && !middle && !ring && !pinky) return 'clear';
-  if(cnt===0) return 'erase';
+  if(cnt===0) return 'pause';                      // 握拳 → 暂停
   if(index && !middle && !ring && !pinky) return 'draw';
   if(index && middle && !ring && !pinky) return 'switch';
-  if(thumb && !index && !middle && !ring && !pinky) return 'pause';
   if(cnt>=4) return 'clear';
   return 'none';
 }
@@ -838,8 +836,8 @@ function onResults(results){
   const now = Date.now();
 
   const hints={
-    draw:'🖊️ 食指绘画', switch:'✌️ 换色', erase:'✊ 擦除',
-    clear:'🤏 捏合清空', pause:'👍 暂停', none:'...'
+    draw:'🖊️ 食指绘画', switch:'✌️ 换色',
+    clear:'🤏 捏合清空', pause:'✊ 握拳暂停', none:'...'
   };
   gestureHint.textContent=hints[gesture]||'...';
 
@@ -860,13 +858,13 @@ function onResults(results){
   } else { state.clearHoldTriggered=false; state.gestureHoldStart=0; state.pauseHoldStart=0; }
 
   // 离散手势 (防抖)
-  if(gesture!=='none'&&gesture!=='draw'&&gesture!=='erase'){
-    // 换色：即时触发（仍保留防抖）
+  if(gesture!=='none'&&gesture!=='draw'){
+    // 换色：即时触发
     if(gesture==='switch' && state.gestureDebounceUntil<now && gesture!==state.lastGesture){
       state.gestureDebounceUntil=now+600;
       cycleColor();
     }
-    // 暂停：需保持竖拇指 0.8s 防止误触
+    // 暂停（握拳）：需保持 0.8s 防止误触
     if(gesture==='pause'){
       if(!state.pauseHoldStart) state.pauseHoldStart = now;
       const held = now - state.pauseHoldStart;
@@ -877,10 +875,9 @@ function onResults(results){
         state.pauseTriggered = true;
       }
       if(held > 200 && state.gestureDebounceUntil >= now){
-        // 冷却中
-        gestureHint.textContent = '👍 已触发，冷却中...';
+        gestureHint.textContent = '✊ 已触发，冷却中...';
       } else if(held > 200){
-        gestureHint.textContent = '👍 保持竖拇指... ' + Math.round(Math.min(held/800,1)*100) + '%';
+        gestureHint.textContent = '✊ 保持握拳... ' + Math.round(Math.min(held/800,1)*100) + '%';
       }
     } else {
       state.pauseHoldStart = 0;
@@ -893,16 +890,10 @@ function onResults(results){
   state.lastGesture=gesture;
   state.pauseHoldStart = 0;
 
-  // 绘画/擦除
+  // 绘画（模式由按钮控制：绘画/橡皮擦）
   if(state.orbitMode||state.mode==='paused') return;
 
-  if(gesture==='draw'||gesture==='erase'){
-    const desired=gesture==='erase'?'erase':'draw';
-    if(state.mode!==desired&&state.gestureDebounceUntil<now){
-      if(state.activeStrokePts.length>0) finalizeStroke();
-      state.mode=desired; updateUI();
-    }
-
+  if(gesture==='draw'){
     const pt={x:pos3D.x, y:pos3D.y, z:pos3D.z};
 
     if(!state.isDrawing){
