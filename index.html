@@ -2,480 +2,568 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover, maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>空间手势绘画</title>
+<title>3D 空间手势绘画</title>
 <style>
   :root {
     --safe-bottom: env(safe-area-inset-bottom, 8px);
     --safe-top: env(safe-area-inset-top, 8px);
   }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
+  * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
-    width: 100%; height: 100%;
-    overflow: hidden;
-    background: #000;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-    -webkit-user-select: none;
-    user-select: none;
-    position: fixed;
-    top: 0; left: 0;
+    width:100%; height:100%; overflow:hidden; background:#1a1a2e;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    touch-action:pan-x pan-y pinch-zoom;
+    -webkit-tap-highlight-color:transparent;
+    -webkit-user-select:none; user-select:none;
+    position:fixed; top:0; left:0;
   }
 
-  /* ---- 视频层 ---- */
-  #video-container {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    overflow: hidden;
-  }
-  #video {
-    width: 100%; height: 100%;
-    object-fit: cover;
-    transform: scaleX(-1); /* 镜像 */
-  }
-  #video.front-camera {
-    transform: scaleX(-1);
-  }
-  #video.back-camera {
-    transform: scaleX(1);
+  /* Three.js 画布 */
+  #three-canvas {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    display:block;
   }
 
-  /* ---- 画布层 ---- */
-  #canvas {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    pointer-events: none;
-    z-index: 5;
+  /* 摄像头 PiP */
+  #pip-container {
+    position:absolute; bottom:calc(150px + var(--safe-bottom)); right:10px;
+    width:110px; height:150px;
+    border-radius:14px; overflow:hidden;
+    border:2px solid rgba(255,255,255,0.4);
+    box-shadow:0 4px 20px rgba(0,0,0,0.5);
+    z-index:8;
+    background:#000;
+    transition:all 0.3s;
   }
-
-  /* ---- 手部骨骼层 ---- */
-  #landmark-canvas {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    pointer-events: none;
-    z-index: 6;
+  #pip-video {
+    width:100%; height:100%; object-fit:cover;
+    transform:scaleX(-1);
   }
+  #pip-container.hidden { opacity:0; pointer-events:none; }
 
-  /* ---- UI 叠加层 ---- */
+  /* UI 叠加层 */
   #ui-layer {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    pointer-events: none;
-    z-index: 10;
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    pointer-events:none; z-index:10;
   }
-  #ui-layer > * {
-    pointer-events: auto;
-  }
+  #ui-layer > * { pointer-events:auto; }
 
-  /* ---- 顶部状态栏 ---- */
+  /* 顶部状态栏 */
   #top-bar {
-    position: absolute;
-    top: var(--safe-top);
-    left: 12px; right: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 14px;
-    background: rgba(0,0,0,0.55);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-radius: 16px;
-    color: #fff;
-    font-size: 13px;
+    position:absolute;
+    top:var(--safe-top); left:10px; right:10px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:7px 12px;
+    background:rgba(20,20,40,0.6); backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    border-radius:16px; color:#fff; font-size:12px;
   }
-
   #status-badge {
-    display: flex; align-items: center; gap: 6px;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-weight: 600;
-    font-size: 12px;
-    transition: all 0.3s;
+    display:flex; align-items:center; gap:5px;
+    padding:4px 10px; border-radius:16px;
+    font-weight:700; font-size:11px; transition:all 0.3s;
   }
-  #status-badge.drawing { background: #4CAF50; color: #fff; }
-  #status-badge.erasing { background: #fff; color: #333; }
-  #status-badge.paused  { background: #FF9800; color: #fff; }
+  #status-badge.drawing { background:#4CAF50; color:#fff; }
+  #status-badge.erasing { background:#fff; color:#333; }
+  #status-badge.paused  { background:#FF9800; color:#fff; }
+  #status-badge.orbiting { background:#2196F3; color:#fff; }
 
   #brush-preview {
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    border: 2px solid rgba(255,255,255,0.7);
-    background: var(--brush-color, #FF0000);
-    transition: all 0.2s;
-    flex-shrink: 0;
+    width:24px; height:24px; border-radius:50%;
+    border:2px solid rgba(255,255,255,0.5);
+    background:var(--brush-color,#FF3B30);
+    transition:all 0.2s; flex-shrink:0;
   }
-
-  #depth-indicator {
-    font-size: 11px;
-    color: rgba(255,255,255,0.7);
-    min-width: 60px; text-align: center;
+  #depth-info {
+    font-size:10px; color:rgba(255,255,255,0.65);
+    text-align:center; line-height:1.3; min-width:50px;
   }
-
   .top-btn {
-    width: 36px; height: 36px;
-    border-radius: 50%;
-    border: none;
-    background: rgba(255,255,255,0.15);
-    color: #fff;
-    font-size: 18px;
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s;
-    flex-shrink: 0;
+    width:34px; height:34px; border-radius:50%; border:none;
+    background:rgba(255,255,255,0.12); color:#fff;
+    font-size:16px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:all 0.2s; flex-shrink:0;
   }
-  .top-btn:active {
-    background: rgba(255,255,255,0.35);
-    transform: scale(0.92);
-  }
+  .top-btn:active { background:rgba(255,255,255,0.35); transform:scale(0.9); }
+  .top-btn.on { background:rgba(33,150,243,0.6); box-shadow:0 0 10px rgba(33,150,243,0.5); }
 
-  /* ---- 底部工具栏 ---- */
+  /* 底部工具栏 */
   #bottom-bar {
-    position: absolute;
-    bottom: calc(12px + var(--safe-bottom));
-    left: 12px; right: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    position:absolute;
+    bottom:calc(10px + var(--safe-bottom)); left:10px; right:10px;
+    display:flex; flex-direction:column; gap:7px;
   }
-
   #color-row {
-    display: flex;
-    justify-content: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 8px 12px;
-    background: rgba(0,0,0,0.55);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-radius: 20px;
+    display:flex; justify-content:center; gap:7px; flex-wrap:wrap;
+    padding:7px 10px;
+    background:rgba(20,20,40,0.6); backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    border-radius:18px;
   }
   .color-dot {
-    width: 30px; height: 30px;
-    border-radius: 50%;
-    border: 2.5px solid transparent;
-    cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    width:28px; height:28px; border-radius:50%;
+    border:2.5px solid transparent; cursor:pointer;
+    transition:all 0.2s; box-shadow:0 2px 6px rgba(0,0,0,0.4);
   }
-  .color-dot:active { transform: scale(1.2); }
-  .color-dot.active {
-    border-color: #fff;
-    box-shadow: 0 0 12px currentColor;
-    transform: scale(1.15);
-  }
+  .color-dot:active { transform:scale(1.2); }
+  .color-dot.active { border-color:#fff; box-shadow:0 0 14px currentColor; transform:scale(1.15); }
 
   #tool-row {
-    display: flex;
-    justify-content: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    padding: 8px 14px;
-    background: rgba(0,0,0,0.55);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-radius: 20px;
+    display:flex; justify-content:center; align-items:center;
+    gap:8px; flex-wrap:wrap;
+    padding:7px 12px;
+    background:rgba(20,20,40,0.6); backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    border-radius:18px;
   }
   .tool-btn {
-    height: 38px;
-    min-width: 44px;
-    padding: 0 14px;
-    border-radius: 20px;
-    border: none;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    display: flex; align-items: center; gap: 5px;
-    transition: all 0.2s;
-    color: #fff;
-    background: rgba(255,255,255,0.12);
-    white-space: nowrap;
+    height:36px; min-width:40px; padding:0 12px;
+    border-radius:18px; border:none;
+    font-size:12px; font-weight:600; cursor:pointer;
+    display:flex; align-items:center; gap:4px;
+    transition:all 0.2s; color:#fff;
+    background:rgba(255,255,255,0.1); white-space:nowrap;
   }
-  .tool-btn:active {
-    background: rgba(255,255,255,0.3);
-    transform: scale(0.94);
+  .tool-btn:active { background:rgba(255,255,255,0.3); transform:scale(0.93); }
+  .tool-btn.on { background:rgba(255,255,255,0.28); box-shadow:0 0 8px rgba(255,255,255,0.2); }
+  .tool-btn.danger { background:rgba(244,67,54,0.45); }
+  .tool-btn.danger:active { background:rgba(244,67,54,0.75); }
+  .tool-btn.accent { background:rgba(33,150,243,0.45); }
+  .tool-btn.accent.on { background:rgba(33,150,243,0.7); }
+
+  #stroke-size-ctrl {
+    display:flex; align-items:center; gap:4px;
+    padding:3px 8px; background:rgba(255,255,255,0.08); border-radius:14px;
   }
-  .tool-btn.on {
-    background: rgba(255,255,255,0.28);
-    box-shadow: 0 0 8px rgba(255,255,255,0.25);
+  #stroke-size-ctrl button {
+    width:26px; height:26px; border-radius:50%; border:none;
+    background:rgba(255,255,255,0.18); color:#fff;
+    font-size:15px; font-weight:bold; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
   }
-  .tool-btn.danger {
-    background: rgba(244,67,54,0.5);
-    color: #fff;
-  }
-  .tool-btn.danger:active {
-    background: rgba(244,67,54,0.8);
+  #stroke-size-ctrl button:active { background:rgba(255,255,255,0.4); }
+  #stroke-size-label {
+    color:#fff; font-size:11px; font-weight:600;
+    min-width:24px; text-align:center;
   }
 
-  #brush-size-control {
-    display: flex; align-items: center; gap: 6px;
-    padding: 4px 10px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 16px;
-  }
-  #brush-size-control button {
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    border: none;
-    background: rgba(255,255,255,0.2);
-    color: #fff;
-    font-size: 16px;
-    font-weight: bold;
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-  }
-  #brush-size-control button:active { background: rgba(255,255,255,0.45); }
-  #brush-size-label {
-    color: #fff; font-size: 12px; font-weight: 600;
-    min-width: 28px; text-align: center;
-  }
-
-  /* ---- Toast / 提示 ---- */
+  /* Toast */
   #toast {
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%) scale(0.8);
-    background: rgba(0,0,0,0.8);
-    color: #fff;
-    padding: 10px 24px;
-    border-radius: 24px;
-    font-size: 15px;
-    font-weight: 600;
-    pointer-events: none;
-    opacity: 0;
-    transition: all 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.28);
-    z-index: 100;
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%) scale(0.8);
+    background:rgba(0,0,0,0.82); color:#fff;
+    padding:10px 22px; border-radius:22px;
+    font-size:14px; font-weight:600;
+    pointer-events:none; opacity:0; z-index:100;
+    transition:all 0.25s cubic-bezier(0.18,0.89,0.32,1.28);
   }
-  #toast.show {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
+  #toast.show { opacity:1; transform:translate(-50%,-50%) scale(1); }
 
-  /* ---- 清空确认弹窗 ---- */
+  /* 清空确认 */
   #clear-overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 200;
-    opacity: 0; pointer-events: none;
-    transition: opacity 0.3s;
+    position:absolute; inset:0;
+    background:rgba(0,0,0,0.65);
+    display:flex; align-items:center; justify-content:center;
+    z-index:200; opacity:0; pointer-events:none;
+    transition:opacity 0.3s;
   }
-  #clear-overlay.show {
-    opacity: 1; pointer-events: auto;
-  }
+  #clear-overlay.show { opacity:1; pointer-events:auto; }
   #clear-dialog {
-    background: #1e1e1e;
-    border-radius: 20px;
-    padding: 24px;
-    text-align: center;
-    color: #fff;
-    max-width: 300px;
-    width: 85%;
+    background:#1e1e2e; border-radius:20px; padding:24px;
+    text-align:center; color:#fff; max-width:300px; width:85%;
   }
-  #clear-dialog h3 { margin-bottom: 8px; }
-  #clear-dialog p { font-size: 13px; color: #aaa; margin-bottom: 16px; }
+  #clear-dialog h3 { margin-bottom:8px; }
+  #clear-dialog p { font-size:13px; color:#aaa; margin-bottom:16px; }
   #clear-dialog button {
-    padding: 10px 24px;
-    border-radius: 20px;
-    border: none;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    margin: 0 6px;
-    transition: all 0.2s;
+    padding:10px 22px; border-radius:18px; border:none;
+    font-size:14px; font-weight:600; cursor:pointer; margin:0 5px;
   }
-  #clear-dialog .btn-cancel { background: rgba(255,255,255,0.15); color: #fff; }
-  #clear-dialog .btn-confirm { background: #F44336; color: #fff; }
+  #clear-dialog .btn-cancel { background:rgba(255,255,255,0.12); color:#fff; }
+  #clear-dialog .btn-confirm { background:#F44336; color:#fff; }
 
-  /* ---- 手势调试/反馈 ---- */
+  /* 手势提示 */
   #gesture-hint {
-    position: absolute;
-    left: 50%; bottom: calc(160px + var(--safe-bottom));
-    transform: translateX(-50%);
-    padding: 6px 16px;
-    border-radius: 16px;
-    background: rgba(0,0,0,0.45);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    color: rgba(255,255,255,0.75);
-    font-size: 11px;
-    pointer-events: none;
-    transition: opacity 0.3s;
+    position:absolute; left:50%;
+    bottom:calc(140px + var(--safe-bottom));
+    transform:translateX(-50%);
+    padding:5px 14px; border-radius:14px;
+    background:rgba(0,0,0,0.4); backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    color:rgba(255,255,255,0.7); font-size:10px;
+    pointer-events:none; transition:opacity 0.3s;
+    text-align:center; white-space:nowrap;
   }
 
-  /* ---- 响应式 ---- */
-  @media (max-width: 400px) {
-    .color-dot { width: 26px; height: 26px; }
-    .tool-btn { font-size: 11px; padding: 0 10px; height: 34px; }
-    #top-bar { padding: 6px 10px; }
-    #status-badge { font-size: 10px; padding: 3px 10px; }
+  /* 3D 坐标显示 */
+  #coords-display {
+    position:absolute; left:10px; bottom:calc(140px + var(--safe-bottom));
+    padding:4px 10px; border-radius:10px;
+    background:rgba(0,0,0,0.45); backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    color:rgba(255,255,255,0.6); font-size:9px; font-family:monospace;
+    pointer-events:none;
+  }
+
+  @media (max-width:400px) {
+    .color-dot { width:24px; height:24px; }
+    .tool-btn { font-size:10px; padding:0 8px; height:32px; }
+    #pip-container { width:90px; height:120px; bottom:calc(135px + var(--safe-bottom)); }
   }
 </style>
 </head>
 <body>
 
-<!-- 视频层 -->
-<div id="video-container">
-  <video id="video" class="front-camera" autoplay playsinline muted></video>
+<!-- Three.js 3D 场景 -->
+<canvas id="three-canvas"></canvas>
+
+<!-- 摄像头 PiP -->
+<div id="pip-container">
+  <video id="pip-video" autoplay playsinline muted></video>
 </div>
-
-<!-- 画布层 -->
-<canvas id="canvas"></canvas>
-
-<!-- 手部骨骼层 -->
-<canvas id="landmark-canvas"></canvas>
 
 <!-- UI 层 -->
 <div id="ui-layer">
-
-  <!-- Toast -->
   <div id="toast"></div>
 
   <!-- 顶部状态栏 -->
   <div id="top-bar">
-    <span id="status-badge" class="drawing">🖊️ 绘画中</span>
+    <span id="status-badge" class="drawing">🖊️ 3D绘画</span>
     <div id="brush-preview" style="--brush-color:#FF3B30;"></div>
-    <span id="depth-indicator">粗细:5px</span>
+    <span id="depth-info">深度:0.0</span>
+    <button id="btn-orbit-mode" class="top-btn" title="视角/绘画切换">🔍</button>
+    <button id="btn-reset-view" class="top-btn" title="重置视角">🏠</button>
     <button id="btn-camera-switch" class="top-btn" title="切换摄像头">🔄</button>
+    <button id="btn-toggle-pip" class="top-btn" title="显示/隐藏摄像头">📷</button>
   </div>
 
+  <!-- 3D 坐标 -->
+  <div id="coords-display">X:-- Y:-- Z:--</div>
+
   <!-- 手势提示 -->
-  <div id="gesture-hint">将手放入摄像头区域</div>
+  <div id="gesture-hint">✋ 将手放入摄像头区域</div>
 
   <!-- 底部工具栏 -->
   <div id="bottom-bar">
-    <!-- 颜色选择 -->
     <div id="color-row"></div>
-
-    <!-- 工具按钮 -->
     <div id="tool-row">
       <button id="btn-eraser" class="tool-btn">🧹 橡皮擦</button>
       <button id="btn-pause" class="tool-btn">⏯️ 暂停</button>
       <button id="btn-clear" class="tool-btn danger">🗑️ 清空</button>
-      <div id="brush-size-control">
+      <div id="stroke-size-ctrl">
         <button id="btn-size-minus">−</button>
-        <span id="brush-size-label">5px</span>
+        <span id="stroke-size-label">5</span>
         <button id="btn-size-plus">+</button>
       </div>
+      <button id="btn-undo" class="tool-btn">↩️ 撤销</button>
     </div>
   </div>
 
-  <!-- 清空确认弹窗 -->
+  <!-- 清空确认 -->
   <div id="clear-overlay">
     <div id="clear-dialog">
-      <h3>🗑️ 确认清空画布？</h3>
-      <p>此操作无法撤销</p>
+      <h3>🗑️ 确认清空 3D 画布？</h3>
+      <p>此操作无法撤销，所有立体笔画将被清除</p>
       <button class="btn-cancel" id="btn-clear-cancel">取消</button>
       <button class="btn-confirm" id="btn-clear-confirm">确认清空</button>
     </div>
   </div>
 </div>
 
-<!-- ==================== 脚本 ==================== -->
+<!-- ==================== 依赖加载 ==================== -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-<script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
 // ==================== 常量 ====================
 const COLORS = [
-  '#FF3B30', '#FF9500', '#FFCC00', '#34C759',
-  '#007AFF', '#5856D6', '#AF52DE', '#000000', '#FFFFFF'
+  '#FF3B30','#FF9500','#FFCC00','#34C759',
+  '#007AFF','#5856D6','#AF52DE','#000000','#FFFFFF'
 ];
-
-const COLOR_NAMES = ['红', '橙', '黄', '绿', '蓝', '靛', '紫', '黑', '白'];
+const COLOR_NAMES = ['红','橙','黄','绿','蓝','靛','紫','黑','白'];
 
 const GESTURE = {
-  NONE: 'none',
-  DRAW: 'draw',           // 单食指 → 绘画
-  SWITCH_COLOR: 'switch', // 食指+中指 → 切换颜色
-  ERASE: 'erase',         // 握拳 → 橡皮擦
-  CLEAR: 'clear',         // 拇指+食指捏合 → 清空
-  PAUSE: 'pause',         // 仅拇指 → 暂停/继续
+  NONE:'none', DRAW:'draw', SWITCH_COLOR:'switch',
+  ERASE:'erase', CLEAR:'clear', PAUSE:'pause'
+};
+
+// 3D 空间映射参数
+const SPACE = {
+  rangeX: 7,     // X 轴半范围
+  rangeY: 5,     // Y 轴半范围
+  depthMin: -3,  // Z 轴最小（靠近摄像头时）
+  depthMax: 4,   // Z 轴最大（远离摄像头时）
 };
 
 // ==================== 状态 ====================
-let state = {
-  mode: 'draw',           // 'draw' | 'erase' | 'paused'
-  currentColor: COLORS[0],
-  currentColorIdx: 0,
-  brushSize: 5,
-  minBrush: 2,
-  maxBrush: 20,
-  isDrawing: false,
-  lastPoint: null,
-  lastMidPoint: null,
-  lastGesture: GESTURE.NONE,
-  gestureDebounceUntil: 0,
-  gestureHoldStart: 0,
-  clearHoldTriggered: false,
-  facingMode: 'user',     // 'user' (前置) | 'environment' (后置)
-  cameraReady: false,
+const state = {
+  mode:'draw',          // 'draw'|'erase'|'paused'
+  orbitMode:false,      // true=视角模式, false=绘画模式
+  currentColor:COLORS[0],
+  currentColorIdx:0,
+  strokeSize:0.08,      // 3D 线径
+  minStroke:0.03,
+  maxStroke:0.25,
+  isDrawing:false,
+  lastGesture:GESTURE.NONE,
+  gestureDebounceUntil:0,
+  gestureHoldStart:0,
+  clearHoldTriggered:false,
+  facingMode:'user',
+  cameraReady:false,
+  pipVisible:true,
+
+  // 3D 笔画数据
+  activeStrokePoints:[],   // 当前笔画累积的 3D 点
+  strokes:[],              // 已完成笔画 [{points:[{x,y,z}], color, size}]
+  strokeMeshes:[],         // 已完成笔画的 Three.js Mesh
+
+  // 当前手指 3D 位置
+  fingerPos3D:new THREE.Vector3(0,0,0),
+  fingerVisible:false,
 };
 
 // ==================== DOM 引用 ====================
-const videoEl    = document.getElementById('video');
-const canvasEl   = document.getElementById('canvas');
-const ctx        = canvasEl.getContext('2d');
-const lmcEl      = document.getElementById('landmark-canvas');
-const lmcCtx      = lmcEl.getContext('2d');
+const threeCanvas = document.getElementById('three-canvas');
+const pipVideo   = document.getElementById('pip-video');
+const pipContainer = document.getElementById('pip-container');
 
-const statusBadge    = document.getElementById('status-badge');
-const brushPreview   = document.getElementById('brush-preview');
-const depthIndicator = document.getElementById('depth-indicator');
-const gestureHint    = document.getElementById('gesture-hint');
-const toastEl        = document.getElementById('toast');
-const clearOverlay   = document.getElementById('clear-overlay');
-const colorRow       = document.getElementById('color-row');
-const brushSizeLabel = document.getElementById('brush-size-label');
+const statusBadge     = document.getElementById('status-badge');
+const brushPreview    = document.getElementById('brush-preview');
+const depthInfo       = document.getElementById('depth-info');
+const gestureHint     = document.getElementById('gesture-hint');
+const coordsDisplay   = document.getElementById('coords-display');
+const toastEl         = document.getElementById('toast');
+const clearOverlay    = document.getElementById('clear-overlay');
+const colorRow        = document.getElementById('color-row');
+const strokeSizeLabel = document.getElementById('stroke-size-label');
+const btnOrbitMode    = document.getElementById('btn-orbit-mode');
 
-// ==================== Canvas 尺寸适配 ====================
-function resizeCanvases() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  [canvasEl, lmcEl].forEach(el => {
-    el.width  = w * devicePixelRatio;
-    el.height = h * devicePixelRatio;
-    el.style.width  = w + 'px';
-    el.style.height = h + 'px';
-  });
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.scale(devicePixelRatio, devicePixelRatio);
-  lmcCtx.setTransform(1,0,0,1,0,0);
-  lmcCtx.scale(devicePixelRatio, devicePixelRatio);
+// ==================== Three.js 初始化 ====================
+const renderer = new THREE.WebGLRenderer({ canvas:threeCanvas, antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+
+const scene = new THREE.Scene();
+
+// 背景渐变
+scene.background = new THREE.Color('#1a1a2e');
+scene.fog = new THREE.Fog('#1a1a2e', 8, 30);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.5, 50);
+camera.position.set(0, 1.5, 10);
+camera.lookAt(0, 0.5, 0);
+
+// OrbitControls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.5, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.minDistance = 3;
+controls.maxDistance = 20;
+controls.maxPolarAngle = Math.PI * 0.75;
+controls.enabled = false; // 默认绘画模式，禁用 orbit
+controls.update();
+
+// ==================== 光照 ====================
+const ambientLight = new THREE.AmbientLight('#ffffff', 1.2);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight('#ffffff', 2.5);
+directionalLight.position.set(5, 10, 7);
+scene.add(directionalLight);
+
+const backLight = new THREE.DirectionalLight('#4488ff', 1.0);
+backLight.position.set(-3, 2, -5);
+scene.add(backLight);
+
+// ==================== 场景元素 ====================
+
+// 3D 网格 — 主参考面 (XY 平面, 即绘画的"画布面")
+const gridXY = new THREE.GridHelper(12, 24, '#335577', '#223344');
+gridXY.position.y = 0;
+scene.add(gridXY);
+
+// 地面参考网格 (XZ 平面)
+const gridXZ = new THREE.GridHelper(12, 24, '#444466', '#222233');
+gridXZ.position.y = -SPACE.rangeY;
+scene.add(gridXZ);
+
+// 深度参考环 — 不同 Z 深度的标记环
+for (let z = SPACE.depthMin; z <= SPACE.depthMax; z += 1.5) {
+  const ringGeo = new THREE.TorusGeometry(SPACE.rangeX, 0.02, 8, 48);
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+    color:'#445566', transparent:true, opacity:0.3
+  }));
+  ring.position.z = z;
+  scene.add(ring);
 }
-window.addEventListener('resize', resizeCanvases);
-window.addEventListener('orientationchange', () => setTimeout(resizeCanvases, 200));
-resizeCanvases();
 
-// ==================== Toast ====================
-let toastTimer = null;
-function showToast(msg, duration = 1200) {
-  clearTimeout(toastTimer);
-  toastEl.textContent = msg;
-  toastEl.classList.add('show');
-  toastTimer = setTimeout(() => toastEl.classList.remove('show'), duration);
+// 原点标记
+const originGeo = new THREE.SphereGeometry(0.12, 16, 16);
+const originMat = new THREE.MeshStandardMaterial({ color:'#ffffff', emissive:'#ffffff', emissiveIntensity:0.5 });
+const originMarker = new THREE.Mesh(originGeo, originMat);
+scene.add(originMarker);
+
+// 3D 光标（跟踪食指尖）
+const cursorGeo = new THREE.SphereGeometry(0.1, 20, 20);
+const cursorMat = new THREE.MeshStandardMaterial({
+  color:'#FF3B30', emissive:'#FF3B30', emissiveIntensity:0.8,
+  roughness:0.3, metalness:0.1
+});
+const cursor3D = new THREE.Mesh(cursorGeo, cursorMat);
+cursor3D.visible = false;
+scene.add(cursor3D);
+
+// 光标光晕
+const glowGeo = new THREE.SphereGeometry(0.18, 16, 16);
+const glowMat = new THREE.MeshBasicMaterial({
+  color:'#FF3B30', transparent:true, opacity:0.25
+});
+const cursorGlow = new THREE.Mesh(glowGeo, glowMat);
+cursor3D.add(cursorGlow);
+
+// 光标十字准线
+const crossGroup = new THREE.Group();
+cursor3D.add(crossGroup);
+['x','y','z'].forEach((axis, i) => {
+  const len = 0.35;
+  const geo = new THREE.CylinderGeometry(0.015, 0.015, len, 6);
+  const mat = new THREE.MeshBasicMaterial({
+    color: i===0?'#ff4444':i===1?'#44ff44':'#4444ff', transparent:true, opacity:0.6
+  });
+  const cyl = new THREE.Mesh(geo, mat);
+  if (axis==='x') { cyl.rotation.z = Math.PI/2; }
+  if (axis==='z') { cyl.rotation.x = Math.PI/2; }
+  crossGroup.add(cyl);
+});
+
+// ==================== 活跃笔画预览线 ====================
+let activeLineMesh = null;
+const activeLineMaterial = new THREE.MeshBasicMaterial({
+  color:'#ffffff', transparent:true, opacity:0.9
+});
+
+function updateActiveLinePreview() {
+  // 移除旧预览
+  if (activeLineMesh) {
+    scene.remove(activeLineMesh);
+    if (activeLineMesh.geometry) activeLineMesh.geometry.dispose();
+    activeLineMesh = null;
+  }
+
+  const pts = state.activeStrokePoints;
+  if (pts.length < 2) return;
+
+  // 使用 TubeGeometry 渲染活跃笔画预览
+  const curve = new THREE.CatmullRomCurve3(
+    pts.map(p => new THREE.Vector3(p.x, p.y, p.z)),
+    false, 'catmullrom', 0.5
+  );
+  const tubeGeo = new THREE.TubeGeometry(curve, Math.min(pts.length * 4, 200), state.strokeSize, 8, false);
+  const mat = state.mode === 'erase'
+    ? new THREE.MeshBasicMaterial({ color:'#ff4444', transparent:true, opacity:0.5, wireframe:true })
+    : new THREE.MeshStandardMaterial({
+        color:state.currentColor, roughness:0.4, metalness:0.05,
+        emissive:state.currentColor, emissiveIntensity:0.3
+      });
+  activeLineMesh = new THREE.Mesh(tubeGeo, mat);
+  scene.add(activeLineMesh);
+}
+
+function finalizeStroke() {
+  const pts = state.activeStrokePoints;
+  if (pts.length < 2) {
+    // 单点 → 小球
+    if (pts.length === 1) {
+      const p = pts[0];
+      const sphereGeo = new THREE.SphereGeometry(state.strokeSize, 12, 12);
+      const sphereMat = new THREE.MeshStandardMaterial({
+        color:state.currentColor, roughness:0.4, metalness:0.05,
+        emissive:state.currentColor, emissiveIntensity:0.2
+      });
+      const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+      sphere.position.set(p.x, p.y, p.z);
+      scene.add(sphere);
+      state.strokeMeshes.push(sphere);
+      state.strokes.push({ points:pts, color:state.currentColor, size:state.strokeSize });
+    }
+    return;
+  }
+
+  // 移除活跃预览
+  if (activeLineMesh) {
+    scene.remove(activeLineMesh);
+    if (activeLineMesh.geometry) activeLineMesh.geometry.dispose();
+    activeLineMesh = null;
+  }
+
+  // 创建永久 TubeGeometry
+  const curve = new THREE.CatmullRomCurve3(
+    pts.map(p => new THREE.Vector3(p.x, p.y, p.z)),
+    false, 'catmullrom', 0.5
+  );
+  const tubularSegments = Math.min(pts.length * 6, 300);
+  const tubeGeo = new THREE.TubeGeometry(curve, tubularSegments, state.strokeSize, 8, false);
+  const tubeMat = new THREE.MeshStandardMaterial({
+    color:state.currentColor,
+    roughness:0.45,
+    metalness:0.05,
+    emissive:state.currentColor,
+    emissiveIntensity:0.15,
+  });
+  const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+  scene.add(tubeMesh);
+  state.strokeMeshes.push(tubeMesh);
+  state.strokes.push({
+    points:[...pts],
+    color:state.currentColor,
+    size:state.strokeSize
+  });
+
+  state.activeStrokePoints = [];
+}
+
+// ==================== MediaPipe → 3D 坐标映射 ====================
+function mapTo3D(landmark) {
+  // MediaPipe: x∈[0,1], y∈[0,1], z≈[-0.3, 0.3]
+  // 映射到 3D 空间
+  const x = (landmark.x - 0.5) * SPACE.rangeX * 2;
+  const y = (0.5 - landmark.y) * SPACE.rangeY * 2; // 翻转 Y
+  // Z: 使用相对深度，扩大范围
+  const z = SPACE.depthMin + (landmark.z + 0.3) / 0.6 * (SPACE.depthMax - SPACE.depthMin);
+  return new THREE.Vector3(
+    Math.max(-SPACE.rangeX, Math.min(SPACE.rangeX, x)),
+    Math.max(-SPACE.rangeY, Math.min(SPACE.rangeY, y)),
+    Math.max(SPACE.depthMin, Math.min(SPACE.depthMax, z))
+  );
 }
 
 // ==================== 颜色选择器 ====================
 function buildColorRow() {
   colorRow.innerHTML = '';
-  COLORS.forEach((c, i) => {
+  COLORS.forEach((c,i) => {
     const dot = document.createElement('div');
-    dot.className = 'color-dot' + (i === state.currentColorIdx ? ' active' : '');
+    dot.className = 'color-dot' + (i===state.currentColorIdx?' active':'');
     dot.style.backgroundColor = c;
-    dot.title = COLOR_NAMES[i];
-    dot.addEventListener('click', () => setColor(i));
-    dot.addEventListener('touchend', (e) => { e.preventDefault(); setColor(i); });
+    dot.addEventListener('click', ()=>setColor(i));
+    dot.addEventListener('touchend', e=>{ e.preventDefault(); setColor(i); });
     colorRow.appendChild(dot);
   });
 }
@@ -486,243 +574,331 @@ function setColor(idx) {
   state.mode = 'draw';
   updateUI();
   buildColorRow();
-  showToast('🎨 ' + COLOR_NAMES[idx] + '色');
+  cursorMat.color.set(state.currentColor);
+  cursorMat.emissive.set(state.currentColor);
+  glowMat.color.set(state.currentColor);
+  showToast('🎨 '+COLOR_NAMES[idx]+'色');
 }
 
 function cycleColor() {
-  const next = (state.currentColorIdx + 1) % COLORS.length;
-  setColor(next);
+  setColor((state.currentColorIdx + 1) % COLORS.length);
+}
+
+// ==================== Toast ====================
+let toastTimer;
+function showToast(msg, dur=1200) {
+  clearTimeout(toastTimer);
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  toastTimer = setTimeout(()=>toastEl.classList.remove('show'), dur);
 }
 
 // ==================== UI 更新 ====================
 function updateUI() {
-  brushPreview.style.setProperty('--brush-color', state.mode === 'erase' ? '#fff' : state.currentColor);
-  brushSizeLabel.textContent = state.brushSize + 'px';
-  depthIndicator.textContent = '粗细:' + state.brushSize + 'px';
+  brushPreview.style.setProperty('--brush-color',
+    state.mode==='erase'?'#fff':state.currentColor);
+  strokeSizeLabel.textContent = Math.round(state.strokeSize*100);
+  depthInfo.textContent = '笔径:'+(state.strokeSize*100).toFixed(0);
 
   statusBadge.className = '';
-  if (state.mode === 'draw') {
+  const btnErase = document.getElementById('btn-eraser');
+  const btnPause = document.getElementById('btn-pause');
+
+  if (state.orbitMode) {
+    statusBadge.classList.add('orbiting');
+    statusBadge.innerHTML = '🔍 视角模式';
+    btnErase.classList.remove('on');
+    btnPause.classList.remove('on');
+    btnOrbitMode.classList.add('on');
+  } else if (state.mode==='draw') {
     statusBadge.classList.add('drawing');
-    statusBadge.innerHTML = '🖊️ 绘画中';
-    document.getElementById('btn-eraser').classList.remove('on');
-    document.getElementById('btn-pause').classList.remove('on');
-  } else if (state.mode === 'erase') {
+    statusBadge.innerHTML = '🖊️ 3D绘画';
+    btnErase.classList.remove('on');
+    btnPause.classList.remove('on');
+    btnOrbitMode.classList.remove('on');
+  } else if (state.mode==='erase') {
     statusBadge.classList.add('erasing');
-    statusBadge.innerHTML = '🧹 橡皮擦';
-    document.getElementById('btn-eraser').classList.add('on');
-    document.getElementById('btn-pause').classList.remove('on');
-  } else if (state.mode === 'paused') {
+    statusBadge.innerHTML = '🧹 擦除中';
+    btnErase.classList.add('on');
+    btnPause.classList.remove('on');
+    btnOrbitMode.classList.remove('on');
+  } else if (state.mode==='paused') {
     statusBadge.classList.add('paused');
     statusBadge.innerHTML = '⏸️ 已暂停';
-    document.getElementById('btn-pause').classList.add('on');
+    btnPause.classList.add('on');
+    btnOrbitMode.classList.remove('on');
   }
 }
+
+// ==================== 视角控制 ====================
+function toggleOrbitMode() {
+  state.orbitMode = !state.orbitMode;
+  controls.enabled = state.orbitMode;
+  state.isDrawing = false;
+
+  // 切换模式时结束当前笔画
+  if (state.activeStrokePoints.length > 0) {
+    finalizeStroke();
+  }
+
+  if (state.orbitMode) {
+    showToast('🔍 视角模式 — 拖动旋转/缩放', 1500);
+    gestureHint.textContent = '🔍 视角模式 — 双指旋转缩放';
+  } else {
+    showToast('🖊️ 绘画模式');
+    gestureHint.textContent = '🖊️ 食指绘画 | 手在空间中移动';
+  }
+  updateUI();
+}
+
+function resetView() {
+  camera.position.set(0, 1.5, 10);
+  controls.target.set(0, 0.5, 0);
+  controls.update();
+  showToast('🏠 视角已重置');
+}
+
+btnOrbitMode.addEventListener('click', toggleOrbitMode);
+btnOrbitMode.addEventListener('touchend', e=>{ e.preventDefault(); toggleOrbitMode(); });
+document.getElementById('btn-reset-view').addEventListener('click', resetView);
+document.getElementById('btn-reset-view').addEventListener('touchend', e=>{ e.preventDefault(); resetView(); });
+
+// PiP 切换
+document.getElementById('btn-toggle-pip').addEventListener('click', ()=>{
+  state.pipVisible = !state.pipVisible;
+  pipContainer.classList.toggle('hidden', !state.pipVisible);
+});
+document.getElementById('btn-toggle-pip').addEventListener('touchend', e=>{
+  e.preventDefault();
+  state.pipVisible = !state.pipVisible;
+  pipContainer.classList.toggle('hidden', !state.pipVisible);
+});
+
+// ==================== 工具按钮 ====================
+function toggleEraser() {
+  if (state.orbitMode) { state.orbitMode = false; controls.enabled = false; }
+  state.mode = state.mode==='erase'?'draw':'erase';
+  if (state.activeStrokePoints.length > 0) finalizeStroke();
+  updateUI();
+  showToast(state.mode==='erase'?'🧹 橡皮擦模式':'🖊️ 3D绘画模式');
+}
+
+function togglePause() {
+  if (state.orbitMode) { state.orbitMode = false; controls.enabled = false; }
+  state.mode = state.mode==='paused'?'draw':'paused';
+  if (state.activeStrokePoints.length > 0) finalizeStroke();
+  state.isDrawing = false;
+  updateUI();
+  showToast(state.mode==='paused'?'⏸️ 已暂停':'▶️ 已继续');
+}
+
+function showClearConfirm() {
+  clearOverlay.classList.add('show');
+}
+function hideClearConfirm() {
+  clearOverlay.classList.remove('show');
+}
+
+function clearAllStrokes() {
+  // 清除所有 3D 笔画
+  state.strokeMeshes.forEach(m => {
+    scene.remove(m);
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) m.material.dispose();
+  });
+  state.strokeMeshes = [];
+  state.strokes = [];
+  state.activeStrokePoints = [];
+  if (activeLineMesh) {
+    scene.remove(activeLineMesh);
+    if (activeLineMesh.geometry) activeLineMesh.geometry.dispose();
+    activeLineMesh = null;
+  }
+  hideClearConfirm();
+  showToast('🗑️ 3D画布已清空');
+}
+
+function undoLastStroke() {
+  if (state.strokeMeshes.length === 0) { showToast('没有可撤销的笔画'); return; }
+  const mesh = state.strokeMeshes.pop();
+  scene.remove(mesh);
+  if (mesh.geometry) mesh.geometry.dispose();
+  if (mesh.material) mesh.material.dispose();
+  state.strokes.pop();
+  showToast('↩️ 已撤销最后一笔');
+}
+
+document.getElementById('btn-eraser').addEventListener('click', toggleEraser);
+document.getElementById('btn-eraser').addEventListener('touchend', e=>{ e.preventDefault(); toggleEraser(); });
+document.getElementById('btn-pause').addEventListener('click', togglePause);
+document.getElementById('btn-pause').addEventListener('touchend', e=>{ e.preventDefault(); togglePause(); });
+document.getElementById('btn-clear').addEventListener('click', showClearConfirm);
+document.getElementById('btn-clear').addEventListener('touchend', e=>{ e.preventDefault(); showClearConfirm(); });
+document.getElementById('btn-clear-confirm').addEventListener('click', clearAllStrokes);
+document.getElementById('btn-clear-cancel').addEventListener('click', hideClearConfirm);
+document.getElementById('btn-undo').addEventListener('click', undoLastStroke);
+document.getElementById('btn-undo').addEventListener('touchend', e=>{ e.preventDefault(); undoLastStroke(); });
+
+// 笔径调节
+document.getElementById('btn-size-plus').addEventListener('click', ()=>{
+  state.strokeSize = Math.min(state.maxStroke, state.strokeSize + 0.02);
+  updateUI();
+});
+document.getElementById('btn-size-plus').addEventListener('touchend', e=>{
+  e.preventDefault();
+  state.strokeSize = Math.min(state.maxStroke, state.strokeSize + 0.02);
+  updateUI();
+});
+document.getElementById('btn-size-minus').addEventListener('click', ()=>{
+  state.strokeSize = Math.max(state.minStroke, state.strokeSize - 0.02);
+  updateUI();
+});
+document.getElementById('btn-size-minus').addEventListener('touchend', e=>{
+  e.preventDefault();
+  state.strokeSize = Math.max(state.minStroke, state.strokeSize - 0.02);
+  updateUI();
+});
 
 // ==================== 摄像头 ====================
 async function startCamera() {
   try {
-    if (videoEl.srcObject) {
-      const tracks = videoEl.srcObject.getTracks();
-      tracks.forEach(t => t.stop());
+    if (pipVideo.srcObject) {
+      pipVideo.srcObject.getTracks().forEach(t=>t.stop());
     }
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: state.facingMode,
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-      audio: false,
+      video:{ facingMode:state.facingMode, width:{ideal:640}, height:{ideal:480} },
+      audio:false
     });
-    videoEl.srcObject = stream;
-    videoEl.className = state.facingMode === 'user' ? 'front-camera' : 'back-camera';
-
-    await new Promise(r => { videoEl.onloadedmetadata = r; });
-    await videoEl.play();
+    pipVideo.srcObject = stream;
+    await pipVideo.play();
     state.cameraReady = true;
-    resizeCanvases();
-  } catch (err) {
-    console.error('摄像头启动失败:', err);
-    gestureHint.textContent = '⚠️ 无法访问摄像头，请检查权限';
+  } catch(err) {
+    console.error('摄像头:', err);
+    gestureHint.textContent = '⚠️ 摄像头访问失败';
   }
 }
 
 async function switchCamera() {
-  state.facingMode = state.facingMode === 'user' ? 'environment' : 'user';
+  state.facingMode = state.facingMode==='user'?'environment':'user';
   state.cameraReady = false;
-  showToast(state.facingMode === 'user' ? '📱 前置摄像头' : '🌍 后置摄像头');
+  showToast(state.facingMode==='user'?'📱 前置摄像头':'🌍 后置摄像头');
   await startCamera();
   state.cameraReady = true;
 }
-
 document.getElementById('btn-camera-switch').addEventListener('click', switchCamera);
-document.getElementById('btn-camera-switch').addEventListener('touchend', (e) => {
-  e.preventDefault(); switchCamera();
-});
+document.getElementById('btn-camera-switch').addEventListener('touchend', e=>{ e.preventDefault(); switchCamera(); });
+
+// ==================== 手势识别 ====================
+function isFingerExtended(lm, tipIdx, pipIdx) {
+  return (lm[pipIdx].y - lm[tipIdx].y) > 0.03;
+}
+function isThumbExtended(lm) {
+  const tip = lm[4], mcp = lm[2];
+  return Math.abs(tip.x - mcp.x) > 0.05;
+}
+function getExtendedFingers(lm) {
+  return {
+    thumb: isThumbExtended(lm),
+    index: isFingerExtended(lm,8,6),
+    middle: isFingerExtended(lm,12,10),
+    ring: isFingerExtended(lm,16,14),
+    pinky: isFingerExtended(lm,20,18),
+  };
+}
+
+function classifyGesture(lm) {
+  const f = getExtendedFingers(lm);
+  const {thumb,index,middle,ring,pinky} = f;
+  const cnt = [thumb,index,middle,ring,pinky].filter(Boolean).length;
+
+  // 捏合 → 清空
+  const pinchDist = Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y);
+  if (pinchDist < 0.05 && !middle && !ring && !pinky) return GESTURE.CLEAR;
+
+  if (cnt===0) return GESTURE.ERASE;
+  if (index && !middle && !ring && !pinky) return GESTURE.DRAW;
+  if (index && middle && !ring && !pinky) return GESTURE.SWITCH_COLOR;
+  if (thumb && !index && !middle && !ring && !pinky) return GESTURE.PAUSE;
+  if (cnt>=4) return GESTURE.CLEAR;
+  return GESTURE.NONE;
+}
 
 // ==================== MediaPipe Hands ====================
 let hands = null;
-let lastHandLandmarks = null;
 
 async function initHands() {
   hands = new Hands({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
   });
-
   hands.setOptions({
-    maxNumHands: 1,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.7,
-    minTrackingConfidence: 0.5,
+    maxNumHands:1, modelComplexity:1,
+    minDetectionConfidence:0.7, minTrackingConfidence:0.5,
   });
-
   hands.onResults(onHandResults);
 
-  // 等到视频就绪后开始处理
   const processFrame = async () => {
-    if (state.cameraReady && videoEl.readyState >= 2) {
-      await hands.send({ image: videoEl });
+    if (state.cameraReady && pipVideo.readyState >= 2) {
+      await hands.send({ image:pipVideo });
     }
     requestAnimationFrame(processFrame);
   };
   processFrame();
 }
 
-// ==================== 手势识别 ====================
-function isFingerExtended(lm, tipIdx, pipIdx, mcpIdx) {
-  // 指尖 y < pip y < mcp y 表示手指向上伸展（图像坐标y轴向下）
-  // 使用更鲁棒的判断
-  const tipY = lm[tipIdx].y;
-  const pipY = lm[pipIdx].y;
-  const mcpY = lm[mcpIdx].y;
-  // 指尖明显在 pip 之上 → 伸展
-  return (pipY - tipY) > 0.03;
-}
-
-function isThumbExtended(lm) {
-  // 拇指特殊：比较指尖与 IP 关节的 x 距离
-  const tipX = lm[4].x;
-  const ipX  = lm[3].x;
-  const mcpX = lm[2].x;
-  // 拇指伸展时指尖横向远离手掌
-  const dist = Math.abs(tipX - mcpX);
-  return dist > 0.05;
-}
-
-function getExtendedFingers(lm) {
-  return {
-    thumb:  isThumbExtended(lm),
-    index:  isFingerExtended(lm, 8, 6, 5),
-    middle: isFingerExtended(lm, 12, 10, 9),
-    ring:   isFingerExtended(lm, 16, 14, 13),
-    pinky:  isFingerExtended(lm, 20, 18, 17),
-  };
-}
-
-function classifyGesture(lm) {
-  const f = getExtendedFingers(lm);
-  const { thumb, index, middle, ring, pinky } = f;
-  const extendedCount = [thumb, index, middle, ring, pinky].filter(Boolean).length;
-
-  // 拇指+食指捏合检测 → 清空
-  const thumbTip = lm[4];
-  const indexTip = lm[8];
-  const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-  const isPinching = pinchDist < 0.05 && !middle && !ring && !pinky;
-
-  if (isPinching) {
-    return GESTURE.CLEAR;
-  }
-
-  // 握拳 → 橡皮擦
-  if (extendedCount === 0) {
-    return GESTURE.ERASE;
-  }
-
-  // 仅食指 → 绘画
-  if (index && !middle && !ring && !pinky) {
-    return GESTURE.DRAW;
-  }
-
-  // 食指 + 中指 → 切换颜色
-  if (index && middle && !ring && !pinky) {
-    return GESTURE.SWITCH_COLOR;
-  }
-
-  // 仅拇指 → 暂停
-  if (thumb && !index && !middle && !ring && !pinky) {
-    return GESTURE.PAUSE;
-  }
-
-  // 五指张开 → 也映射为清空（备选）
-  if (extendedCount >= 4) {
-    return GESTURE.CLEAR;
-  }
-
-  return GESTURE.NONE;
-}
-
-function getDepthFactor(lm) {
-  // 使用手腕到中指 MCP 的屏幕空间距离估算深度
-  const wrist = lm[0];
-  const midMcp = lm[9];
-  const screenDist = Math.hypot(wrist.x - midMcp.x, wrist.y - midMcp.y);
-  // 正常范围约 0.05 ~ 0.4，映射到 0~1
-  const factor = Math.max(0, Math.min(1, (screenDist - 0.05) / 0.35));
-  return factor;
-}
-
-// ==================== 手部结果处理 ====================
 function onHandResults(results) {
-  lmcCtx.clearRect(0, 0, lmcEl.width / devicePixelRatio, lmcEl.height / devicePixelRatio);
-
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    lastHandLandmarks = null;
-    gestureHint.textContent = '将手放入摄像头区域';
-    if (state.isDrawing) {
-      state.lastPoint = null;
-      state.lastMidPoint = null;
-      state.isDrawing = false;
+    state.fingerVisible = false;
+    cursor3D.visible = false;
+    gestureHint.textContent = '✋ 将手放入摄像头区域';
+
+    // 手丢失 → 结束笔画
+    if (state.activeStrokePoints.length > 0) {
+      finalizeStroke();
     }
+    state.isDrawing = false;
+    updateCoordsDisplay(null);
     return;
   }
 
   const lm = results.multiHandLandmarks[0];
-  lastHandLandmarks = lm;
+  state.fingerVisible = true;
 
-  // 绘制手部骨骼
-  drawLandmarks(lm);
+  // 3D 坐标映射
+  const indexTip3D = mapTo3D(lm[8]);
+  state.fingerPos3D.copy(indexTip3D);
+
+  // 更新 3D 光标
+  cursor3D.position.copy(indexTip3D);
+  cursor3D.visible = true;
+  updateCoordsDisplay(indexTip3D);
 
   // 手势分类
   const gesture = classifyGesture(lm);
   const now = Date.now();
 
-  // 更新提示
   const hintMap = {
-    [GESTURE.DRAW]: '🖊️ 食指绘画 (近=粗 远=细)',
-    [GESTURE.SWITCH_COLOR]: '✌️ 切换颜色',
-    [GESTURE.ERASE]: '✊ 橡皮擦',
-    [GESTURE.CLEAR]: '🤏 捏合清空画布',
-    [GESTURE.PAUSE]: '👍 暂停/继续',
-    [GESTURE.NONE]: '识别中...',
+    [GESTURE.DRAW]:'🖊️ 食指3D绘画',
+    [GESTURE.SWITCH_COLOR]:'✌️ 切换颜色',
+    [GESTURE.ERASE]:'✊ 擦除笔画',
+    [GESTURE.CLEAR]:'🤏 捏合清空',
+    [GESTURE.PAUSE]:'👍 暂停/继续',
+    [GESTURE.NONE]:'识别中...',
   };
-  gestureHint.textContent = hintMap[gesture] || hintMap[GESTURE.NONE];
+  gestureHint.textContent = hintMap[gesture]||hintMap[GESTURE.NONE];
 
-  // ---- 清空画布（捏合保持1.5s）----
+  // ---- 清空画布 (捏合1.5s) ----
   if (gesture === GESTURE.CLEAR) {
     if (!state.clearHoldTriggered) {
-      if (state.gestureHoldStart === 0) {
-        state.gestureHoldStart = now;
-      }
+      if (state.gestureHoldStart===0) state.gestureHoldStart = now;
       const elapsed = now - state.gestureHoldStart;
       if (elapsed > 1500 && state.gestureDebounceUntil < now) {
         state.clearHoldTriggered = true;
-        clearCanvas();
+        clearAllStrokes();
         state.gestureDebounceUntil = now + 1500;
         state.gestureHoldStart = 0;
       }
-      // 显示进度
       if (elapsed > 300) {
-        gestureHint.textContent = '🤏 保持捏合清空... ' + Math.round(elapsed / 1500 * 100) + '%';
+        gestureHint.textContent = '🤏 保持捏合... '+Math.round(elapsed/1500*100)+'%';
       }
     }
     return;
@@ -731,236 +907,170 @@ function onHandResults(results) {
     state.gestureHoldStart = 0;
   }
 
-  // ---- 手势动作（带防抖）----
+  // ---- 手势动作 (防抖) ----
   if (gesture !== GESTURE.NONE && gesture !== GESTURE.DRAW && gesture !== GESTURE.ERASE) {
     if (state.gestureDebounceUntil < now && gesture !== state.lastGesture) {
       state.gestureDebounceUntil = now + 600;
-
-      switch (gesture) {
-        case GESTURE.SWITCH_COLOR:
-          cycleColor();
-          break;
-        case GESTURE.PAUSE:
-          togglePause();
-          break;
+      switch(gesture) {
+        case GESTURE.SWITCH_COLOR: cycleColor(); break;
+        case GESTURE.PAUSE: togglePause(); break;
       }
     }
     state.lastGesture = gesture;
+    // 非绘画手势 → 结束当前笔画
+    if (state.activeStrokePoints.length > 0) {
+      finalizeStroke();
+    }
+    state.isDrawing = false;
     return;
   }
 
   state.lastGesture = gesture;
 
-  // ---- 绘画 / 橡皮擦 ----
+  // ---- 绘画 / 擦除 ----
+  if (state.orbitMode) return;  // 视角模式下不绘画
   if (state.mode === 'paused') return;
 
   if (gesture === GESTURE.DRAW || gesture === GESTURE.ERASE) {
-    // 根据手势自动切换模式
     const desiredMode = gesture === GESTURE.ERASE ? 'erase' : 'draw';
     if (state.mode !== desiredMode && state.gestureDebounceUntil < now) {
+      if (state.activeStrokePoints.length > 0) finalizeStroke();
       state.mode = desiredMode;
       updateUI();
     }
 
-    // 获取食指指尖坐标
-    const indexTip = lm[8];
-    const px = indexTip.x * window.innerWidth;
-    const py = indexTip.y * window.innerHeight;
+    // 收集 3D 点
+    const pt = { x:indexTip3D.x, y:indexTip3D.y, z:indexTip3D.z };
 
-    // 深度 → 笔触大小
-    const depthFactor = getDepthFactor(lm);
-    const dynamicSize = state.mode === 'erase'
-      ? state.brushSize * 1.8  // 橡皮擦大一些
-      : state.minBrush + depthFactor * (state.maxBrush - state.minBrush);
-    state.brushSize = Math.round(dynamicSize);
-    updateUI();
-
-    // 开始新笔画
     if (!state.isDrawing) {
       state.isDrawing = true;
-      state.lastPoint = { x: px, y: py };
-      state.lastMidPoint = { x: px, y: py };
-      // 画一个点
-      drawDot(px, py, state.brushSize);
+      state.activeStrokePoints = [pt];
+      cursorMat.emissiveIntensity = 1.2;
+      glowMat.opacity = 0.4;
       return;
     }
 
-    // 平滑绘制
-    const midPoint = {
-      x: (state.lastPoint.x + px) / 2,
-      y: (state.lastPoint.y + py) / 2,
-    };
-    drawSmoothLine(state.lastMidPoint, midPoint, state.lastPoint, state.brushSize);
-    state.lastPoint = { x: px, y: py };
-    state.lastMidPoint = midPoint;
+    // 避免重复点（距离过小）
+    if (state.activeStrokePoints.length > 0) {
+      const last = state.activeStrokePoints[state.activeStrokePoints.length-1];
+      const dist = Math.hypot(pt.x-last.x, pt.y-last.y, pt.z-last.z);
+      if (dist < 0.015) return; // 跳过太近的点
+    }
+
+    state.activeStrokePoints.push(pt);
+
+    // 实时更新笔画预览
+    if (state.activeStrokePoints.length >= 2) {
+      updateActiveLinePreview();
+    }
   } else {
     // 手势丢失 → 结束笔画
-    if (state.isDrawing) {
-      state.isDrawing = false;
-      state.lastPoint = null;
-      state.lastMidPoint = null;
+    if (state.isDrawing && state.activeStrokePoints.length > 0) {
+      finalizeStroke();
     }
+    state.isDrawing = false;
+    cursorMat.emissiveIntensity = 0.8;
+    glowMat.opacity = 0.25;
   }
 }
 
-// ==================== 绘制函数 ====================
-// (定义在下方初始化区，使用 globalCompositeOperation)
-
-function clearCanvas() {
-  ctx.clearRect(0, 0, canvasEl.width / devicePixelRatio, canvasEl.height / devicePixelRatio);
-  showToast('🗑️ 画布已清空');
-  document.getElementById('clear-overlay').classList.remove('show');
+function updateCoordsDisplay(pos) {
+  if (!pos) {
+    coordsDisplay.textContent = 'X:-- Y:-- Z:--';
+    return;
+  }
+  coordsDisplay.textContent =
+    `X:${pos.x.toFixed(1)} Y:${pos.y.toFixed(1)} Z:${pos.z.toFixed(1)}`;
 }
 
-// ==================== 手部骨骼绘制 ====================
-const FINGER_CONNECTIONS = [
-  [0,1],[1,2],[2,3],[3,4],       // 拇指
-  [0,5],[5,6],[6,7],[7,8],       // 食指
-  [0,9],[9,10],[10,11],[11,12],  // 中指
-  [0,13],[13,14],[14,15],[15,16],// 无名指
-  [0,17],[17,18],[18,19],[19,20],// 小指
-  [5,9],[9,13],[13,17],          // 手掌
-];
+// ==================== 渲染循环 ====================
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
 
-function drawLandmarks(lm) {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  // 光标颜色随模式变化
+  if (state.mode === 'erase') {
+    cursorMat.color.set('#ffffff');
+    cursorMat.emissive.set('#ffffff');
+    glowMat.color.set('#ffffff');
+  } else {
+    cursorMat.color.set(state.currentColor);
+    cursorMat.emissive.set(state.currentColor);
+    glowMat.color.set(state.currentColor);
+  }
 
-  // 连线
-  lmcCtx.strokeStyle = 'rgba(0,255,100,0.5)';
-  lmcCtx.lineWidth = 2;
-  FINGER_CONNECTIONS.forEach(([a, b]) => {
-    lmcCtx.beginPath();
-    lmcCtx.moveTo(lm[a].x * w, lm[a].y * h);
-    lmcCtx.lineTo(lm[b].x * w, lm[b].y * h);
-    lmcCtx.stroke();
-  });
+  // 光标脉动
+  const t = performance.now() * 0.005;
+  const s = 1 + Math.sin(t) * 0.08;
+  cursor3D.scale.setScalar(state.isDrawing ? s * 1.2 : s);
 
-  // 关键点
-  lm.forEach((pt, i) => {
-    const px = pt.x * w;
-    const py = pt.y * h;
-    lmcCtx.fillStyle = i === 8 ? '#FF3B30' : 'rgba(255,255,255,0.8)';
-    lmcCtx.beginPath();
-    lmcCtx.arc(px, py, i === 8 ? 6 : 3, 0, Math.PI * 2);
-    lmcCtx.fill();
-  });
+  renderer.render(scene, camera);
 }
+animate();
 
-// ==================== 工具按钮 ====================
-function toggleEraser() {
-  state.mode = state.mode === 'erase' ? 'draw' : 'erase';
-  updateUI();
-  showToast(state.mode === 'erase' ? '🧹 橡皮擦模式' : '🖊️ 绘画模式');
-}
-
-function togglePause() {
-  state.mode = state.mode === 'paused' ? 'draw' : 'paused';
-  state.isDrawing = false;
-  state.lastPoint = null;
-  state.lastMidPoint = null;
-  updateUI();
-  showToast(state.mode === 'paused' ? '⏸️ 已暂停' : '▶️ 已继续');
-}
-
-function showClearConfirm() {
-  document.getElementById('clear-overlay').classList.add('show');
-}
-
-function hideClearConfirm() {
-  document.getElementById('clear-overlay').classList.remove('show');
-}
-
-document.getElementById('btn-eraser').addEventListener('click', toggleEraser);
-document.getElementById('btn-eraser').addEventListener('touchend', (e) => { e.preventDefault(); toggleEraser(); });
-
-document.getElementById('btn-pause').addEventListener('click', togglePause);
-document.getElementById('btn-pause').addEventListener('touchend', (e) => { e.preventDefault(); togglePause(); });
-
-document.getElementById('btn-clear').addEventListener('click', showClearConfirm);
-document.getElementById('btn-clear').addEventListener('touchend', (e) => { e.preventDefault(); showClearConfirm(); });
-
-document.getElementById('btn-clear-confirm').addEventListener('click', clearCanvas);
-document.getElementById('btn-clear-cancel').addEventListener('click', hideClearConfirm);
-
-// 笔触大小手动调节
-document.getElementById('btn-size-plus').addEventListener('click', () => {
-  state.brushSize = Math.min(state.maxBrush, state.brushSize + 1);
-  updateUI();
+// ==================== 窗口适配 ====================
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
-document.getElementById('btn-size-plus').addEventListener('touchend', (e) => {
-  e.preventDefault();
-  state.brushSize = Math.min(state.maxBrush, state.brushSize + 1);
-  updateUI();
-});
-document.getElementById('btn-size-minus').addEventListener('click', () => {
-  state.brushSize = Math.max(state.minBrush, state.brushSize - 1);
-  updateUI();
-});
-document.getElementById('btn-size-minus').addEventListener('touchend', (e) => {
-  e.preventDefault();
-  state.brushSize = Math.max(state.minBrush, state.brushSize - 1);
-  updateUI();
+
+// ==================== 触摸事件：双指 orbit ====================
+// 默认 OrbitControls 处理双指，但绘画模式下禁用 controls
+// 在绘画模式下，检测双指触摸临时启用 orbit
+let touchCount = 0;
+threeCanvas.addEventListener('touchstart', (e) => {
+  touchCount = e.touches.length;
+  if (touchCount >= 2 && !state.orbitMode) {
+    controls.enabled = true;
+  }
+}, { passive:true });
+
+threeCanvas.addEventListener('touchend', (e) => {
+  touchCount = e.touches.length;
+  if (touchCount < 2 && !state.orbitMode) {
+    controls.enabled = false;
+  }
+}, { passive:true });
+
+// 鼠标/触控板双指在桌面端
+threeCanvas.addEventListener('wheel', (e) => {
+  if (!state.orbitMode && !e.ctrlKey && !e.metaKey) {
+    // 允许滚轮缩放
+    controls.enabled = true;
+    // 处理完后恢复
+    setTimeout(() => {
+      if (!state.orbitMode && touchCount < 2) {
+        controls.enabled = false;
+      }
+    }, 300);
+  }
+}, { passive:true });
+
+// ==================== 键盘快捷键 ====================
+window.addEventListener('keydown', (e) => {
+  switch(e.key.toLowerCase()) {
+    case 'o': toggleOrbitMode(); break;
+    case 'r': resetView(); break;
+    case 'e': toggleEraser(); break;
+    case ' ': e.preventDefault(); togglePause(); break;
+    case 'c': cycleColor(); break;
+    case 'z': if (e.ctrlKey||e.metaKey) { e.preventDefault(); undoLastStroke(); } break;
+    case 'delete': clearAllStrokes(); break;
+    case 'f': switchCamera(); break;
+    case 'h': state.pipVisible=!state.pipVisible;
+             pipContainer.classList.toggle('hidden',!state.pipVisible); break;
+  }
 });
 
 // ==================== 初始化 ====================
 async function init() {
-  resizeCanvases();
   buildColorRow();
   updateUI();
   await startCamera();
   await initHands();
-  gestureHint.textContent = '✋ 将手放入摄像头区域';
-  showToast('🚀 手势绘画已就绪', 1500);
-
-  // 设置画布绘制模式（背景透明，但橡皮擦用黑色覆盖视频层实际上不可见...）
-  // 修正：画布背景应该透明，保留笔画。橡皮擦模式时用 clear 或与背景相同的处理
-  // 这里我们让 canvas 透明，只有笔画在上面。橡皮擦用 destination-out 或直接清除区域
-}
-
-// 修正橡皮擦：使用 globalCompositeOperation
-function drawDot(x, y, size) {
-  if (state.mode === 'erase') {
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.fillStyle = 'rgba(0,0,0,1)';
-    ctx.beginPath();
-    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  } else {
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = state.currentColor;
-    ctx.beginPath();
-    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function drawSmoothLine(from, to, control, size) {
-  if (state.mode === 'erase') {
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.strokeStyle = 'rgba(0,0,0,1)';
-    ctx.lineWidth = size;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(from.x, from.y);
-    ctx.quadraticCurveTo(control.x, control.y, to.x, to.y);
-    ctx.stroke();
-    ctx.restore();
-  } else {
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = state.currentColor;
-    ctx.lineWidth = size;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(from.x, from.y);
-    ctx.quadraticCurveTo(control.x, control.y, to.x, to.y);
-    ctx.stroke();
-  }
+  gestureHint.textContent = '✋ 将手放入摄像头 · 食指在3D空间绘画';
+  showToast('🚀 3D空间手势绘画已就绪', 2000);
 }
 
 init().catch(err => {
