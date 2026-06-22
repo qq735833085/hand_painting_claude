@@ -180,6 +180,47 @@
   #clear-dialog .btn-cancel { background:rgba(255,255,255,0.12); color:#fff; }
   #clear-dialog .btn-confirm { background:#F44336; color:#fff; }
 
+  /* 帮助说明弹窗 */
+  #help-overlay {
+    position:absolute; inset:0;
+    background:rgba(0,0,0,0.7);
+    display:flex; align-items:center; justify-content:center;
+    z-index:300; opacity:0; pointer-events:none;
+    transition:opacity 0.35s;
+  }
+  #help-overlay.show { opacity:1; pointer-events:auto; }
+  #help-dialog {
+    background:#1a1a2e; border-radius:20px; padding:24px 20px 18px;
+    color:#fff; max-width:340px; width:88%; max-height:85vh;
+    overflow-y:auto; text-align:center;
+    box-shadow:0 20px 60px rgba(0,0,0,0.6);
+  }
+  #help-dialog h2 { font-size:18px; margin-bottom:4px; }
+  #help-dialog .subtitle { font-size:11px; color:#8899bb; margin-bottom:14px; }
+  #help-dialog .gesture-list { text-align:left; display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+  #help-dialog .gesture-item {
+    display:flex; align-items:center; gap:10px;
+    padding:8px 12px; background:rgba(255,255,255,0.05); border-radius:12px;
+    font-size:12px;
+  }
+  #help-dialog .gesture-item .g-icon {
+    font-size:26px; min-width:36px; text-align:center; line-height:1;
+  }
+  #help-dialog .gesture-item .g-info { flex:1; }
+  #help-dialog .gesture-item .g-name { font-weight:700; margin-bottom:2px; }
+  #help-dialog .gesture-item .g-desc { font-size:10px; color:#aab; }
+  #help-dialog .tip-box {
+    background:rgba(255,200,50,0.1); border-radius:10px;
+    padding:8px 12px; font-size:10px; color:#ddb;
+    text-align:left; margin-bottom:14px; line-height:1.5;
+  }
+  #help-dialog .btn-got-it {
+    padding:10px 40px; border-radius:20px; border:none;
+    background:#4CAF50; color:#fff; font-size:14px;
+    font-weight:700; cursor:pointer; transition:all 0.2s;
+  }
+  #help-dialog .btn-got-it:active { transform:scale(0.95); background:#388E3C; }
+
   /* 手势提示 */
   #gesture-hint {
     position:absolute; left:50%;
@@ -230,6 +271,7 @@
     <button id="btn-orbit-mode" class="top-btn" title="旋转/绘画切换">🔍</button>
     <button id="btn-reset-view" class="top-btn" title="重置视角">🏠</button>
     <button id="btn-camera-switch" class="top-btn" title="前后摄像头">🔄</button>
+    <button id="btn-help" class="top-btn" title="操作说明">❓</button>
   </div>
 
   <div id="coords-display">X:-- Y:-- Z:--</div>
@@ -258,6 +300,40 @@
       <p>所有 3D 笔画将被清除</p>
       <button class="btn-cancel" id="btn-clear-cancel">取消</button>
       <button class="btn-confirm" id="btn-clear-confirm">确认清空</button>
+    </div>
+  </div>
+
+  <!-- 帮助说明弹窗 -->
+  <div id="help-overlay">
+    <div id="help-dialog">
+      <h2>🖐️ 3D 空间手势绘画</h2>
+      <p class="subtitle">将手放入摄像头区域，用以下手势操作</p>
+      <div class="gesture-list">
+        <div class="gesture-item">
+          <span class="g-icon">🖊️</span>
+          <div class="g-info"><div class="g-name">食指伸出</div><div class="g-desc">在空间中绘画，手远近控制笔触深度</div></div>
+        </div>
+        <div class="gesture-item">
+          <span class="g-icon">✌️</span>
+          <div class="g-info"><div class="g-name">食指 + 中指</div><div class="g-desc">循环切换颜色</div></div>
+        </div>
+        <div class="gesture-item">
+          <span class="g-icon">✊</span>
+          <div class="g-info"><div class="g-name">握拳</div><div class="g-desc">橡皮擦模式</div></div>
+        </div>
+        <div class="gesture-item">
+          <span class="g-icon">🤏</span>
+          <div class="g-info"><div class="g-name">拇指食指捏合（保持1.5秒）</div><div class="g-desc">清空画布</div></div>
+        </div>
+        <div class="gesture-item">
+          <span class="g-icon">👍</span>
+          <div class="g-info"><div class="g-name">拇指竖起（保持0.8秒）</div><div class="g-desc">暂停 / 继续绘画</div></div>
+        </div>
+      </div>
+      <div class="tip-box">
+        💡 <b>提示：</b>点击 🔍 或双指拖动可旋转视角查看笔画的深度层次；底部工具栏提供按钮操作作为手势的补充。
+      </div>
+      <button class="btn-got-it" id="btn-help-dismiss">我知道了，开始绘画！</button>
     </div>
   </div>
 </div>
@@ -299,8 +375,10 @@ const state = {
   lastGesture:'none',
   gestureDebounceUntil:0,
   gestureHoldStart:0,
+  pauseHoldStart:0,
   clearHoldTriggered:false,
-  facingMode:'user',
+  pauseTriggered:false,
+  facingMode:'environment',
   cameraReady:false,
 
   // 笔画数据
@@ -323,6 +401,8 @@ const gestureHint   = document.getElementById('gesture-hint');
 const coordsDisplay = document.getElementById('coords-display');
 const toastEl       = document.getElementById('toast');
 const clearOverlay  = document.getElementById('clear-overlay');
+const helpOverlay   = document.getElementById('help-overlay');
+const helpDismiss   = document.getElementById('btn-help-dismiss');
 const colorRow      = document.getElementById('color-row');
 const sizeLabel     = document.getElementById('stroke-size-label');
 const btnOrbit      = document.getElementById('btn-orbit-mode');
@@ -602,6 +682,17 @@ function togglePause(){
 }
 function showClearConfirm(){ clearOverlay.classList.add('show'); }
 function hideClearConfirm(){ clearOverlay.classList.remove('show'); }
+
+function showHelp(){ helpOverlay.classList.add('show'); }
+function hideHelp(){
+  helpOverlay.classList.remove('show');
+  try { localStorage.setItem('hp_help_shown','1'); } catch(e){}
+}
+// 帮助按钮
+document.getElementById('btn-help').addEventListener('click', showHelp);
+document.getElementById('btn-help').addEventListener('touchend', e=>{ e.preventDefault(); showHelp(); });
+helpDismiss.addEventListener('click', hideHelp);
+helpDismiss.addEventListener('touchend', e=>{ e.preventDefault(); hideHelp(); });
 function clearAll(){
   state.strokeMeshes.forEach(m=>{scene.remove(m);m.geometry?.dispose();m.material?.dispose();});
   state.strokeMeshes=[]; state.strokes=[]; state.activeStrokePts=[];
@@ -676,7 +767,10 @@ document.getElementById('btn-camera-switch').addEventListener('touchend',e=>{e.p
 
 // ==================== 手势识别 ====================
 function isFingerUp(lm,tip,pip){ return (lm[pip].y-lm[tip].y)>0.03; }
-function isThumbUp(lm){ return Math.abs(lm[4].x-lm[2].x)>0.05; }
+function isThumbUp(lm){
+  // 更严格的拇指检测：指尖需明显远离 MCP 关节
+  return Math.abs(lm[4].x - lm[2].x) > 0.07;
+}
 function getFingers(lm){
   return {
     thumb:isThumbUp(lm), index:isFingerUp(lm,8,6),
@@ -763,14 +857,33 @@ function onResults(results){
       if(el>300) gestureHint.textContent='🤏 保持捏合... '+Math.round(el/1500*100)+'%';
     }
     return;
-  } else { state.clearHoldTriggered=false; state.gestureHoldStart=0; }
+  } else { state.clearHoldTriggered=false; state.gestureHoldStart=0; state.pauseHoldStart=0; }
 
   // 离散手势 (防抖)
   if(gesture!=='none'&&gesture!=='draw'&&gesture!=='erase'){
-    if(state.gestureDebounceUntil<now&&gesture!==state.lastGesture){
+    // 换色：即时触发（仍保留防抖）
+    if(gesture==='switch' && state.gestureDebounceUntil<now && gesture!==state.lastGesture){
       state.gestureDebounceUntil=now+600;
-      if(gesture==='switch') cycleColor();
-      if(gesture==='pause') togglePause();
+      cycleColor();
+    }
+    // 暂停：需保持竖拇指 0.8s 防止误触
+    if(gesture==='pause'){
+      if(!state.pauseHoldStart) state.pauseHoldStart = now;
+      const held = now - state.pauseHoldStart;
+      if(held > 800 && state.gestureDebounceUntil < now){
+        togglePause();
+        state.gestureDebounceUntil = now + 2000;
+        state.pauseHoldStart = 0;
+        state.pauseTriggered = true;
+      }
+      if(held > 200 && state.gestureDebounceUntil >= now){
+        // 冷却中
+        gestureHint.textContent = '👍 已触发，冷却中...';
+      } else if(held > 200){
+        gestureHint.textContent = '👍 保持竖拇指... ' + Math.round(Math.min(held/800,1)*100) + '%';
+      }
+    } else {
+      state.pauseHoldStart = 0;
     }
     state.lastGesture=gesture;
     if(state.activeStrokePts.length>0) finalizeStroke();
@@ -778,6 +891,7 @@ function onResults(results){
     return;
   }
   state.lastGesture=gesture;
+  state.pauseHoldStart = 0;
 
   // 绘画/擦除
   if(state.orbitMode||state.mode==='paused') return;
@@ -879,6 +993,13 @@ async function init(){
   await initHands();
   gestureHint.textContent='🖊️ 食指在空间中绘画 · 旋转视角查看深度';
   showToast('🚀 3D 空间绘画已就绪', 2000);
+
+  // 首次访问自动弹出帮助说明
+  try {
+    if(!localStorage.getItem('hp_help_shown')){
+      setTimeout(()=>showHelp(), 800);
+    }
+  } catch(e){}
 }
 init().catch(err=>{
   console.error('初始化失败:',err);
