@@ -369,7 +369,9 @@ const state = {
   minStroke:0.02,
   maxStroke:0.22,
   isDrawing:false,
+  strokeLostTime:0,         // 笔画丢失计时（grace period 起点）
   lastGesture:'none',
+  gestureStableCount:0,     // 手势连续相同帧数
   gestureDebounceUntil:0,
   gestureHoldStart:0,
   pauseHoldStart:0,
@@ -765,7 +767,7 @@ document.getElementById('btn-camera-switch').addEventListener('click',switchCame
 document.getElementById('btn-camera-switch').addEventListener('touchend',e=>{e.preventDefault();switchCamera();});
 
 // ==================== 手势识别 ====================
-function isFingerUp(lm,tip,pip){ return (lm[pip].y-lm[tip].y)>0.03; }
+function isFingerUp(lm,tip,pip){ return (lm[pip].y-lm[tip].y)>0.02; }
 function isThumbUp(lm){
   // 更严格的拇指检测：指尖需明显远离 MCP 关节
   return Math.abs(lm[4].x - lm[2].x) > 0.07;
@@ -799,7 +801,7 @@ async function initHands(){
   });
   hands.setOptions({
     maxNumHands:1, modelComplexity:1,
-    minDetectionConfidence:0.7, minTrackingConfidence:0.5,
+    minDetectionConfidence:0.65, minTrackingConfidence:0.35,
   });
   hands.onResults(onResults);
 
@@ -813,12 +815,25 @@ async function initHands(){
 }
 
 function onResults(results){
+  const now = Date.now();
+
+  // ---- 手部丢失 ----
   if(!results.multiHandLandmarks || results.multiHandLandmarks.length===0){
     state.fingerVisible=false; cursor3D.visible=false;
     gestureHint.textContent='✋ 将手放入摄像头区域';
-    if(state.activeStrokePts.length>0) finalizeStroke();
-    state.isDrawing=false;
     coordsDisplay.textContent='X:-- Y:-- Z:--';
+
+    // 250ms 宽容期：短暂丢失不切断笔画
+    if(state.isDrawing && state.activeStrokePts.length>0){
+      if(!state.strokeLostTime) state.strokeLostTime = now;
+      if(now - state.strokeLostTime > 250){
+        finalizeStroke();
+        state.isDrawing = false;
+        state.strokeLostTime = 0;
+      }
+    } else {
+      state.strokeLostTime = 0;
+    }
     return;
   }
 
@@ -833,15 +848,28 @@ function onResults(results){
     `X:${pos3D.x.toFixed(1)} Y:${pos3D.y.toFixed(1)} Z:${pos3D.z.toFixed(1)}`;
 
   const gesture = classifyGesture(lm);
-  const now = Date.now();
+
+  // 手势稳定性：连续相同才确认切换
+  if(gesture === state.lastGesture){
+    state.gestureStableCount++;
+  } else {
+    state.gestureStableCount = 1;
+  }
+  const stableFrames = 2; // 需连续2帧确认
 
   const hints={
     draw:'🖊️ 食指绘画', switch:'✌️ 换色',
     clear:'🤏 捏合清空', pause:'✊ 握拳暂停', none:'...'
   };
-  gestureHint.textContent=hints[gesture]||'...';
 
-  // 捏合清空 (1.5s)
+  // 绘画中 → 显示绘画提示（除非在宽容期）
+  if(state.isDrawing && (gesture==='draw' || state.strokeLostTime>0)){
+    gestureHint.textContent = hints.draw;
+  } else {
+    gestureHint.textContent = hints[gesture]||'...';
+  }
+
+  // ---- 捏合清空 (1.5s) ----
   if(gesture==='clear'){
     if(!state.clearHoldTriggered){
       if(!state.gestureHoldStart) state.gestureHoldStart=now;
@@ -854,21 +882,25 @@ function onResults(results){
       }
       if(el>300) gestureHint.textContent='🤏 保持捏合... '+Math.round(el/1500*100)+'%';
     }
+    // 清除宽容期（用户主动操作）
+    if(state.isDrawing && state.activeStrokePts.length>0){
+      finalizeStroke(); state.isDrawing=false; state.strokeLostTime=0;
+    }
     return;
   } else { state.clearHoldTriggered=false; state.gestureHoldStart=0; state.pauseHoldStart=0; }
 
-  // 离散手势 (防抖)
+  // ---- 离散手势（换色/暂停）----
   if(gesture!=='none'&&gesture!=='draw'){
     // 换色：即时触发
-    if(gesture==='switch' && state.gestureDebounceUntil<now && gesture!==state.lastGesture){
+    if(gesture==='switch' && state.gestureDebounceUntil<now && state.gestureStableCount>=stableFrames){
       state.gestureDebounceUntil=now+600;
       cycleColor();
     }
-    // 暂停（握拳）：需保持 0.8s 防止误触
+    // 暂停（握拳）：需保持 0.8s
     if(gesture==='pause'){
       if(!state.pauseHoldStart) state.pauseHoldStart = now;
       const held = now - state.pauseHoldStart;
-      if(held > 800 && state.gestureDebounceUntil < now){
+      if(held > 800 && state.gestureDebounceUntil < now && state.gestureStableCount>=stableFrames){
         togglePause();
         state.gestureDebounceUntil = now + 2000;
         state.pauseHoldStart = 0;
@@ -882,18 +914,32 @@ function onResults(results){
     } else {
       state.pauseHoldStart = 0;
     }
+    // 仅在手势稳定确认后才切断笔画
+    if(state.gestureStableCount >= stableFrames){
+      if(state.isDrawing && state.activeStrokePts.length>0){
+        finalizeStroke();
+        state.isDrawing = false;
+        state.strokeLostTime = 0;
+      }
+    }
     state.lastGesture=gesture;
-    if(state.activeStrokePts.length>0) finalizeStroke();
-    state.isDrawing=false;
     return;
   }
   state.lastGesture=gesture;
   state.pauseHoldStart = 0;
 
-  // 绘画（模式由按钮控制：绘画/橡皮擦）
-  if(state.orbitMode||state.mode==='paused') return;
+  // ---- 绘画 ----
+  if(state.orbitMode||state.mode==='paused'){
+    if(state.isDrawing && state.activeStrokePts.length>0){
+      finalizeStroke(); state.isDrawing=false; state.strokeLostTime=0;
+    }
+    return;
+  }
 
   if(gesture==='draw'){
+    // 画笔恢复 → 清除宽容计时
+    state.strokeLostTime = 0;
+
     const pt={x:pos3D.x, y:pos3D.y, z:pos3D.z};
 
     if(!state.isDrawing){
@@ -903,17 +949,27 @@ function onResults(results){
       return;
     }
 
-    // 去重
+    // 去重（放宽阈值适应快速移动）
     if(state.activeStrokePts.length>0){
       const last=state.activeStrokePts[state.activeStrokePts.length-1];
-      if(Math.hypot(pt.x-last.x,pt.y-last.y,pt.z-last.z)<0.01) return;
+      if(Math.hypot(pt.x-last.x,pt.y-last.y,pt.z-last.z)<0.005) return;
     }
     state.activeStrokePts.push(pt);
     if(state.activeStrokePts.length>=2) updatePreview();
   } else {
-    if(state.isDrawing&&state.activeStrokePts.length>0) finalizeStroke();
-    state.isDrawing=false;
-    cursorMat.emissiveIntensity=0.9; glowMat.opacity=0.2;
+    // gesture==='none' → 宽容期内保持笔画，超时后切断
+    if(state.isDrawing && state.activeStrokePts.length>0){
+      if(!state.strokeLostTime) state.strokeLostTime = now;
+      if(now - state.strokeLostTime > 250){
+        finalizeStroke();
+        state.isDrawing = false;
+        state.strokeLostTime = 0;
+        cursorMat.emissiveIntensity=0.9; glowMat.opacity=0.2;
+      }
+    } else {
+      state.strokeLostTime = 0;
+      cursorMat.emissiveIntensity=0.9; glowMat.opacity=0.2;
+    }
   }
 }
 
